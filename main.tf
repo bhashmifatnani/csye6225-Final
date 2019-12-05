@@ -104,6 +104,127 @@ resource "google_compute_route" "route-table" {
   
 }
 
+resource "google_project_service" "project_sql" {
+ project = "${var.gcpProject}"
+  service = "sqladmin.googleapis.com"
+
+  disable_dependent_services = true
+}
+
+
+resource "google_pubsub_subscription" "gcp_sub" {
+  name  = "gcp-subscription"
+  project = "${var.gcpProject}"
+  topic = "${google_pubsub_topic.topic.name}"
+
+  labels = {
+    foo = "bar"
+  }
+
+  # 20 minutes
+  message_retention_duration = "1200s"
+  retain_acked_messages      = true
+
+  ack_deadline_seconds = 20
+
+  expiration_policy {
+    ttl = "300000.5s"
+  }
+}
+
+resource "google_pubsub_topic" "topic" {
+  name       = "gcp-topic"
+  project    = "${var.gcpProject}"
+
+}
+
+
+resource "google_cloudfunctions_function" "function" {
+  name                  = "gcp_cloud_function"
+  project               = "${var.gcpProject}"
+  runtime               = "python37"
+  available_memory_mb   = 128
+  source_archive_bucket = "${google_storage_bucket.bucket-gcp-fall2019.name}"
+  source_archive_object = "${google_storage_bucket_object.archive.name}"
+  timeout               = 61
+  entry_point           = "foos"
+  event_trigger {
+    event_type = "google.pubsub.topic.publish"
+  //  event_type = "providers/cloud.storage/eventTypes/object.change"
+    resource   = "${google_storage_bucket.bucket-gcp-fall2019.name}"
+    failure_policy {
+      retry = true
+    }
+  }
+}
+
+resource "google_storage_bucket" "bucket-gcp-fall2019" {
+  project        = "${var.gcpProject}"
+  name = "cloudfunction-storage-bucket-gcp"
+}
+
+resource "google_storage_bucket_object" "archive" {
+  name   = "index.zip"
+  bucket = "${google_storage_bucket.bucket-gcp-fall2019.name}"
+  source = "try.zip"
+}
+
+# IAM entry for a single user to invoke the function
+resource "google_cloudfunctions_function_iam_member" "invoker" {
+  project        = "${var.gcpProject}"
+  region         = "${google_cloudfunctions_function.function.region}"
+  cloud_function = "${google_cloudfunctions_function.function.name}"
+
+  role   = "roles/cloudfunctions.invoker"
+  member = "serviceAccount:harshitha@reference-point-260720.iam.gserviceaccount.com"
+}
+
+
+
+# Random identifier for Database name
+resource "random_pet" "database_name" {
+  prefix = "csye6225-cloud-sql-instnace"
+  separator = "-"
+}
+
+resource "google_sql_database_instance" "cloudsql-mysql-master" {
+  project        = "${var.gcpProject}"
+  name = "${random_pet.database_name.id}"
+   database_version = "MYSQL_5_6"
+  region = "us-central1"
+  
+ 
+
+  settings {
+    # Second-generation instance tiers are based on the machine
+    # type. See argument reference below.
+    tier = "db-f1-micro"
+  disk_type              = "PD_SSD"
+  disk_size              = "10"
+    ip_configuration {
+            ipv4_enabled = true
+            require_ssl = false
+           
+        }
+   }
+    depends_on = [google_project_service.project_sql]
+}
+
+resource "google_sql_user" "users" {
+  name     = "root"
+  instance = "${google_sql_database_instance.cloudsql-mysql-master.name}"
+  password = "denim123"
+}
+
+resource "google_sql_database" "default" {
+  name       = "csye6225_db"
+  project    = "${var.gcpProject}"
+  instance   = "${google_sql_database_instance.cloudsql-mysql-master.name}"
+  charset    = "utf8"
+  collation  = "utf8_general_ci"
+  depends_on = [google_sql_database_instance.cloudsql-mysql-master]
+}
+
 # CREATE THE LOAD BALANCER
 
 
@@ -243,3 +364,5 @@ resource "google_compute_firewall" "firewall" {
     ports    = ["5000"]
   }
 }
+
+

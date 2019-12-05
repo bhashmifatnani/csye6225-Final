@@ -6,6 +6,56 @@ provider "google" {
 
 
 
+# resource "google_project_service" "project" {
+#   project = "${var.gcpProject}"
+#   service = "iam.googleapis.com"
+
+#   disable_dependent_services = true
+# }
+# resource "google_project_iam_binding" "project" {
+#   project = "${var.gcpProject}"
+#   role    = "roles/editor"
+
+#   members = [
+#      "serviceAccount:harshitha@reference-point-260720.iam.gserviceaccount.com",
+#   ]
+# }
+
+# resource "google_project_iam_binding" "project1" {
+#   project = "${var.gcpProject}"
+#   role    = "roles/storage.objectViewer"
+ 
+#   members = [
+#       "serviceAccount:harshitha@reference-point-260720.iam.gserviceaccount.com",
+#   ]
+# }
+
+# resource "google_project_iam_binding" "project3" {
+#   project = "${var.gcpProject}"
+#   role    = "roles/compute.instanceAdmin"
+ 
+#   members = [
+#      "serviceAccount:harshitha@reference-point-260720.iam.gserviceaccount.com",
+#   ]
+# }
+resource "google_project_service" "projectservice" {
+  project = "${var.gcpProject}"
+  service = "bigtableadmin.googleapis.com"
+
+  disable_dependent_services = true
+}
+
+resource "google_bigtable_instance" "production-instance" {
+  name = "tf-instance"
+
+  cluster {
+    cluster_id   = "tf-instance-cluster"
+    zone         = "us-central1-b"
+    num_nodes    = 3
+    storage_type = "HDD"
+  }
+   depends_on = ["google_project_service.projectservice"]
+}
 
 
 
@@ -51,6 +101,17 @@ resource "google_compute_route" "route-table" {
   dest_range  = "0.0.0.0/0"
   network     = google_compute_network.VPC_GCP.name
   next_hop_gateway = "default-internet-gateway"
+  
+}
+
+# CREATE THE LOAD BALANCER
+
+
+module "lb" {
+  source                = "./http-load-balancer" 
+  gcpProject            = var.gcpProject
+  url_map               = google_compute_url_map.urlmap.self_link 
+  enable_http           = var.enable_http
   
 }
 
@@ -166,4 +227,19 @@ resource "google_compute_instance_group_manager" "my-instance-manager" {
   }
   }
 
+resource "google_compute_firewall" "firewall" {
+  project = "${var.gcpProject}"
+  name    = "lb-fw"
+  network = "default"
 
+
+  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
+
+  target_tags = ["private-app"]
+  source_tags = ["private-app"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5000"]
+  }
+}
